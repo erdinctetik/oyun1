@@ -1,0 +1,317 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Diş Kahramanı: Mikroplara Karşı</title>
+    <link href="https://fonts.googleapis.com/css2?family=Fredoka+One&display=swap" rel="stylesheet">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            font-family: 'Fredoka One', cursive;
+            user-select: none;
+            touch-action: none;
+            -webkit-tap-highlight-color: transparent;
+            transition: background 2s ease;
+        }
+        canvas { display: block; }
+        
+        .ui-layer {
+            position: absolute;
+            top: 15px; left: 15px;
+            pointer-events: none; z-index: 10;
+        }
+        .score-box {
+            font-size: 24px; color: #FFFFFF;
+            background: rgba(0,0,0,0.4);
+            padding: 8px 16px; border-radius: 15px;
+            border: 2px solid #fff;
+        }
+        .message-layer {
+            position: absolute; top: 30%; left: 50%;
+            transform: translate(-50%, -50%);
+            font-size: 50px; color: white;
+            text-shadow: 3px 3px 0px #00BCD4;
+            pointer-events: none; opacity: 0;
+            transition: opacity 0.3s; z-index: 20;
+            text-align: center; width: 100%;
+        }
+
+        /* AYAR PANELİ */
+        .settings-panel {
+            position: absolute; bottom: 0; left: 0;
+            width: 100%; height: 140px;
+            background: rgba(255, 255, 255, 0.9);
+            border-top: 5px solid #00BCD4;
+            border-radius: 20px 20px 0 0;
+            display: flex; justify-content: space-around; align-items: center;
+            padding: 0 10px; box-sizing: border-box;
+            z-index: 30;
+        }
+        .control-group {
+            display: flex; flex-direction: column; align-items: center;
+            width: 22%;
+        }
+        .control-label { font-size: 12px; color: #333; margin-bottom: 5px; }
+
+        input[type=range] {
+            -webkit-appearance: none; width: 100%; height: 8px;
+            background: #ddd; border-radius: 10px; outline: none;
+        }
+        input[type=range]::-webkit-slider-thumb {
+            -webkit-appearance: none; width: 24px; height: 24px;
+            border-radius: 50%; background: #00BCD4; border: 2px solid white;
+        }
+
+        .top-controls {
+            position: absolute; top: 15px; right: 15px;
+            display: flex; gap: 10px; z-index: 50;
+        }
+        .btn-action {
+            background: #4CAF50; color: white; border-radius: 10px;
+            padding: 8px 12px; font-size: 14px; cursor: pointer;
+            box-shadow: 0 3px 0 #2E7D32;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="ui-layer">
+        <div class="score-box">TEMİZLİK PUANI: <span id="score">0</span> ✨</div>
+    </div>
+
+    <div class="top-controls">
+        <button class="btn-action" onclick="resetGame()">♻️ YENİDEN BAŞLA</button>
+    </div>
+
+    <div id="message" class="message-layer">TERTEMİZ!</div>
+    <canvas id="gameCanvas"></canvas>
+
+    <div class="settings-panel">
+        <div class="control-group">
+            <div class="control-label">Fırça Yeri 🪥</div>
+            <input type="range" id="posRange" min="0" max="100" value="20">
+        </div>
+        <div class="control-group">
+            <div class="control-label">Macun Miktarı 🫧</div>
+            <input type="range" id="sizeRange" min="15" max="40" value="25">
+        </div>
+        <div class="control-group">
+            <div class="control-label">Ağırlık ⚖️</div>
+            <input type="range" id="weightRange" min="3" max="10" value="5">
+        </div>
+        <div class="control-group">
+            <div class="control-label">Fırlatma Hızı 🚀</div>
+            <input type="range" id="speedRange" min="15" max="40" value="25">
+        </div>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const scoreEl = document.getElementById('score');
+        const msgEl = document.getElementById('message');
+
+        const posInput = document.getElementById('posRange');
+        const sizeInput = document.getElementById('sizeRange');
+        const weightInput = document.getElementById('weightRange');
+        const speedInput = document.getElementById('speedRange');
+
+        let cw, ch, score = 0;
+        let particles = [];
+        let flyingBalls = [];
+
+        // GÖKYÜZÜ DÖNGÜSÜ
+        let skyTime = 0; // 0 ile Math.PI arası gündüz, sonrası gece
+
+        // FİZİK
+        let ballRadius = 25;
+        let gravityVal = 0.5;
+        let powerMulti = 0.25;
+        let catapultBaseX = 120;
+        let friction = 0.8;
+        let slingY;
+
+        let currentEmoji = '🫧'; // Köpük
+
+        // DİŞ VE MİKROPLAR
+        let target = { x: 0, y: 0, baseX: 0, r: 40, angle: 0, speed: 0.02, emoji: '👾' };
+        let plaque = { x: 0, y: 0, w: 50, h: 220, health: 10, isActive: true, dir: 1 };
+
+        let slingBall = { x: 0, y: 0, isDragging: false };
+
+        function resize() {
+            cw = window.innerWidth;
+            ch = window.innerHeight;
+            canvas.width = cw;
+            canvas.height = ch - 140;
+            slingY = canvas.height - 100;
+            updateCatapultPos();
+            target.baseX = cw - 120;
+            plaque.x = cw * 0.7;
+        }
+        window.addEventListener('resize', resize);
+
+        function updateCatapultPos() {
+            const pct = parseInt(posInput.value);
+            catapultBaseX = 80 + (pct / 100) * (cw/2 - 80);
+            if (!slingBall.isDragging) { slingBall.x = catapultBaseX; slingBall.y = slingY; }
+        }
+
+        // Kontroller
+        function onDown(e) {
+            const t = e.touches ? e.touches[0] : e;
+            if (t.clientY > canvas.height) return;
+            if (Math.hypot(t.clientX - slingBall.x, t.clientY - slingBall.y) < 80) slingBall.isDragging = true;
+        }
+        function onMove(e) {
+            if (!slingBall.isDragging) return;
+            const t = e.touches ? e.touches[0] : e;
+            let dx = t.clientX - catapultBaseX, dy = t.clientY - slingY;
+            let dist = Math.hypot(dx, dy);
+            if (dist > 130) { let a = Math.atan2(dy, dx); dx = Math.cos(a)*130; dy = Math.sin(a)*130; }
+            slingBall.x = catapultBaseX + dx; slingBall.y = slingY + dy;
+        }
+        function onUp() {
+            if (!slingBall.isDragging) return;
+            slingBall.isDragging = false;
+            const dx = catapultBaseX - slingBall.x, dy = slingY - slingBall.y;
+            flyingBalls.push({
+                x: slingBall.x, y: slingBall.y,
+                vx: dx * powerMulti, vy: dy * powerMulti,
+                emoji: (Math.random() > 0.5 ? '🫧' : '🥛'), // Köpük veya Macun
+                r: ballRadius, firedAt: Date.now()
+            });
+            slingBall.x = catapultBaseX; slingBall.y = slingY;
+        }
+
+        window.addEventListener('mousedown', onDown); window.addEventListener('mousemove', onMove); window.addEventListener('mouseup', onUp);
+        window.addEventListener('touchstart', onDown); window.addEventListener('touchmove', (e) => { e.preventDefault(); onMove(e); }, {passive:false}); window.addEventListener('touchend', onUp);
+
+        posInput.addEventListener('input', updateCatapultPos);
+        sizeInput.addEventListener('input', e => ballRadius = parseInt(e.target.value));
+        weightInput.addEventListener('input', e => gravityVal = parseInt(e.target.value)/10);
+        speedInput.addEventListener('input', e => powerMulti = parseInt(e.target.value)/100);
+
+        function resetGame() {
+            score = 0; scoreEl.innerText = score;
+            flyingBalls = []; plaque.health = 10; plaque.isActive = true;
+            showMsg("FIRÇALAMA BAŞLASIN!");
+        }
+
+        function showMsg(t) { msgEl.innerText = t; msgEl.style.opacity = 1; setTimeout(() => msgEl.style.opacity = 0, 1000); }
+
+        function update() {
+            // GÖKYÜZÜ DÖNGÜSÜ
+            skyTime += 0.005;
+            let skyCycle = skyTime % (Math.PI * 2);
+            let isNight = skyCycle > Math.PI;
+
+            // Arka Plan Rengi
+            if (!isNight) document.body.style.background = "#87CEEB"; // Gündüz mavisi
+            else document.body.style.background = "#191970"; // Gece mavisi
+
+            // Hedef Mikrop Hareketi
+            target.angle += target.speed;
+            target.y = (canvas.height/2) + Math.sin(target.angle) * (canvas.height/2 - 50);
+            target.x = target.baseX + Math.cos(target.angle*0.5) * 50;
+
+            // Plak (Duvar) Hareketi
+            if(plaque.isActive) {
+                plaque.y += plaque.dir * plaque.speed;
+                if(plaque.y > canvas.height - 110 || plaque.y < 110) plaque.dir *= -1;
+            }
+
+            // Toplar
+            for (let i = flyingBalls.length - 1; i >= 0; i--) {
+                let b = flyingBalls[i];
+                b.vy += gravityVal; b.x += b.vx; b.y += b.vy;
+
+                // Plak Çarpışması
+                if(plaque.isActive && b.x > plaque.x - plaque.w/2 - b.r && b.x < plaque.x + plaque.w/2 + b.r &&
+                   b.y > plaque.y - plaque.h/2 - b.r && b.y < plaque.y + plaque.h/2 + b.r) {
+                    b.vx *= -0.5;
+                    plaque.health--;
+                    createExplosion(b.x, b.y, "#FFFFFF", 5);
+                    if(plaque.health <= 0) {
+                        plaque.isActive = false;
+                        score += 5;
+                        showMsg("PLAK TEMİZLENDİ!");
+                    }
+                }
+
+                // Mikrop Vurma
+                if(Math.hypot(b.x - target.x, b.y - target.y) < b.r + target.r) {
+                    score++; scoreEl.innerText = score;
+                    createExplosion(target.x, target.y, "#00FF00", 15);
+                    target.emoji = ['👾', '🦠', '🦠', '🦷'][Math.floor(Math.random()*4)];
+                    flyingBalls.splice(i, 1);
+                    continue;
+                }
+
+                if(b.y > canvas.height + 100 || b.x > cw + 100) flyingBalls.splice(i, 1);
+            }
+            particles.forEach((p, idx) => { p.x += p.vx; p.y += p.vy; p.life -= 0.02; if(p.life <= 0) particles.splice(idx,1); });
+        }
+
+        function createExplosion(x,y,c,n) {
+            for(let i=0; i<n; i++) particles.push({x, y, vx:(Math.random()-0.5)*10, vy:(Math.random()-0.5)*10, life:1, color:c});
+        }
+
+        function draw() {
+            ctx.clearRect(0, 0, cw, canvas.height);
+
+            // GÜNEŞ / AY YÖRÜNGESİ
+            let skyCycle = skyTime % (Math.PI * 2);
+            let orbitalX = (skyCycle / Math.PI) * cw;
+            if(skyCycle > Math.PI) orbitalX = ((skyCycle - Math.PI) / Math.PI) * cw;
+            let orbitalY = canvas.height - Math.sin(skyCycle % Math.PI) * (canvas.height * 0.8);
+
+            ctx.font = "50px serif";
+            ctx.fillText(skyCycle < Math.PI ? "☀️" : "🌙", orbitalX, orbitalY);
+
+            // DİŞ FIRÇASI (Mancınık)
+            ctx.save();
+            ctx.translate(catapultBaseX, slingY + 40);
+            ctx.fillStyle = "#FF5722";
+            ctx.fillRect(-10, 0, 20, 80); // Sap
+            ctx.fillStyle = "#EEE";
+            ctx.fillRect(-12, -15, 24, 20); // Fırça Başı
+            ctx.restore();
+
+            // Sapan İpleri (Lastik)
+            ctx.strokeStyle = "rgba(255,255,255,0.5)";
+            ctx.lineWidth = 4;
+            if(slingBall.isDragging) {
+                ctx.beginPath(); ctx.moveTo(catapultBaseX-15, slingY); ctx.lineTo(slingBall.x, slingBall.y); ctx.stroke();
+                ctx.beginPath(); ctx.moveTo(catapultBaseX+15, slingY); ctx.lineTo(slingBall.x, slingBall.y); ctx.stroke();
+            }
+
+            // DİŞ PLAĞI
+            if(plaque.isActive) {
+                ctx.fillStyle = "#FFFACD"; // Kirli sarı diş rengi
+                ctx.beginPath(); ctx.roundRect(plaque.x - plaque.w/2, plaque.y - plaque.h/2, plaque.w, plaque.h, 15); ctx.fill();
+                ctx.strokeStyle = "#DAA520"; ctx.stroke();
+                ctx.font = "20px serif"; ctx.fillText("🦠", plaque.x - 10, plaque.y);
+            }
+
+            // MİKROP
+            ctx.font = "60px serif"; ctx.textAlign="center";
+            ctx.fillText(target.emoji, target.x, target.y);
+
+            // MERMİLER (Köpük/Macun)
+            flyingBalls.forEach(b => { ctx.font = b.r*2+"px serif"; ctx.fillText(b.emoji, b.x, b.y); });
+            ctx.font = ballRadius*2+"px serif"; ctx.fillText(currentEmoji, slingBall.x, slingBall.y);
+
+            // Partiküller
+            particles.forEach(p => { ctx.fillStyle = p.color; ctx.globalAlpha = p.life; ctx.beginPath(); ctx.arc(p.x, p.y, 4, 0, Math.PI*2); ctx.fill(); });
+            ctx.globalAlpha = 1;
+        }
+
+        function loop() { update(); draw(); requestAnimationFrame(loop); }
+        resize(); loop();
+    </script>
+</body>
+</html>
